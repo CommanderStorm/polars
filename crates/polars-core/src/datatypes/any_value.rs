@@ -1,14 +1,13 @@
 #[cfg(feature = "dtype-struct")]
 use arrow::legacy::trusted_len::TrustedLenPush;
 use arrow::types::PrimitiveType;
-use polars_utils::format_smartstring;
+use polars_utils::{format_smartstring};
 #[cfg(feature = "dtype-struct")]
 use polars_utils::slice::GetSaferUnchecked;
 #[cfg(feature = "dtype-categorical")]
 use polars_utils::sync::SyncPtr;
 use polars_utils::total_ord::ToTotalOrd;
 use polars_utils::unwrap::UnwrapUncheckedRelease;
-
 use super::*;
 #[cfg(feature = "dtype-struct")]
 use crate::prelude::any_value::arr_to_any_value;
@@ -128,6 +127,20 @@ impl Serialize for AnyValue<'_> {
             AnyValue::Binary(v) => serializer.serialize_newtype_variant(name, 14, "BinaryOwned", v),
             AnyValue::BinaryOwned(v) => {
                 serializer.serialize_newtype_variant(name, 14, "BinaryOwned", v)
+            },
+            #[cfg(feature = "dtype-categorical")]
+            AnyValue::Categorical(_, _, _) | AnyValue::Enum(_, _, _) => {
+                let category = self.get_str().unwrap();
+                serializer.serialize_newtype_variant(name, 15, "Categorical", category)
+            },
+            #[cfg(feature = "dtype-struct")]
+            AnyValue::Struct(_, _, _) => {
+                let cloned_static = self.clone().into_static().expect("Struct converts to StructOwned if static");
+                cloned_static.serialize(serializer)
+            }
+            #[cfg(feature = "dtype-struct")]
+            AnyValue::StructOwned(payload) => {
+                serializer.serialize_newtype_variant(name, 16, "StructOwned",payload)
             },
             _ => Err(serde::ser::Error::custom(
                 "Unknown data type. Cannot serialize",
@@ -878,14 +891,12 @@ impl<'a> AnyValue<'a> {
                 StructOwned(Box::new((avs, fields.to_vec())))
             },
             #[cfg(feature = "dtype-struct")]
-            StructOwned(payload) => {
-                let av = StructOwned(payload);
+            av @ StructOwned(_) => {
                 // SAFETY: owned is already static
                 unsafe { std::mem::transmute::<AnyValue<'a>, AnyValue<'static>>(av) }
             },
             #[cfg(feature = "object")]
-            ObjectOwned(payload) => {
-                let av = ObjectOwned(payload);
+            av @ ObjectOwned(_) => {
                 // SAFETY: owned is already static
                 unsafe { std::mem::transmute::<AnyValue<'a>, AnyValue<'static>>(av) }
             },
